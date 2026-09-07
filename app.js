@@ -1,1752 +1,597 @@
-// ================================
-// PEERTALKR - APP.JS
-// ================================
+// Constantes de almacenamiento
+const STORAGE_CHAT_KEY_PREFIX = 'peertalkr_chat_history_';
+const STORAGE_RECENT_KEY = 'peertalkr_recent_peers';
 
+// Variables de Estado
 let peer = null;
-let conn = null;
-let currentChatPeerId = null;
-let myPeerId = null;
+let activeConn = null;
+let myPeerId = '';
+let currentTargetId = '';
+let selectedFile = null;
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+// Elementos DOM
+const elements = {
+    statusBadge: document.getElementById('statusBadge'),
+    statusText: document.getElementById('statusText'),
+    openSidebarBtn: document.getElementById('openSidebarBtn'),
+    closeSidebarBtn: document.getElementById('closeSidebarBtn'),
+    sidebar: document.getElementById('sidebar'),
+    sidebarOverlay: document.getElementById('sidebarOverlay'),
+    recentChatsList: document.getElementById('recentChatsList'),
+    clearHistoryBtn: document.getElementById('clearHistoryBtn'),
 
-let peerInitializing = false;
-let peerRetryTimer = null;
-let peerTimeoutTimer = null;
+    connectionSection: document.getElementById('connectionSection'),
+    chatSection: document.getElementById('chatSection'),
 
-let historyCache = null;
-let historySaveTimer = null;
-let recentChatsRenderTimer = null;
+    myIdInput: document.getElementById('myIdInput'),
+    copyIdBtn: document.getElementById('copyIdBtn'),
+    connectForm: document.getElementById('connectForm'),
+    remoteIdInput: document.getElementById('remoteIdInput'),
 
-// ======================================================
-// MODO LECTURA
-// ======================================================
+    chatTargetTitle: document.getElementById('chatTargetTitle'),
+    chatConnectionState: document.getElementById('chatConnectionState'),
+    reconnectBtn: document.getElementById('reconnectBtn'),
+    disconnectBtn: document.getElementById('disconnectBtn'),
+    backToConnectBtn: document.getElementById('backToConnectBtn'),
+    messageList: document.getElementById('messageList'),
+    
+    chatForm: document.getElementById('chatForm'),
+    messageInput: document.getElementById('messageInput'),
+    attachBtn: document.getElementById('attachBtn'),
+    fileInput: document.getElementById('fileInput'),
+    filePreviewContainer: document.getElementById('filePreviewContainer'),
+    fileNameDisplay: document.getElementById('fileNameDisplay'),
+    fileSizeDisplay: document.getElementById('fileSizeDisplay'),
+    removeFileBtn: document.getElementById('removeFileBtn'),
 
-let readOnlyMode = true;
+    // Modal
+    modalOverlay: document.getElementById('customModal'),
+    modalIcon: document.getElementById('modalIcon'),
+    modalTitle: document.getElementById('modalTitle'),
+    modalMessage: document.getElementById('modalMessage'),
+    modalConfirmBtn: document.getElementById('modalConfirmBtn'),
+    modalCancelBtn: document.getElementById('modalCancelBtn')
+};
 
-function setChatReadOnly(readOnly) {
-    readOnlyMode = Boolean(readOnly);
-
-    const input = document.getElementById("messageInput");
-    const sendButton = document.getElementById("sendMessageBtn");
-    const fileInput = document.getElementById("fileInput");
-    const fileButton = document.getElementById("fileButton");
-    const form = document.getElementById("messageForm");
-    const modeBadge = document.getElementById("chatModeBadge");
-
-    if (input) {
-        input.disabled = readOnlyMode;
-        input.readOnly = readOnlyMode;
-
-        input.placeholder = readOnlyMode
-            ? "Modo lectura: no puedes escribir"
-            : "Escribe un mensaje...";
-    }
-
-    if (sendButton) {
-        sendButton.disabled = readOnlyMode;
-    }
-
-    if (fileInput) {
-        fileInput.disabled = readOnlyMode;
-
-        // Limpiamos cualquier archivo que haya quedado seleccionado
-        if (readOnlyMode) {
-            fileInput.value = "";
-        }
-    }
-
-    if (fileButton) {
-        fileButton.disabled = readOnlyMode;
-    }
-
-    if (form) {
-        form.classList.toggle("read-only", readOnlyMode);
-    }
-
-    if (modeBadge) {
-        modeBadge.textContent = readOnlyMode
-            ? "Solo lectura"
-            : "En línea";
-
-        modeBadge.classList.toggle("read-only", readOnlyMode);
-        modeBadge.classList.toggle("online", !readOnlyMode);
-    }
-}
-
-// ======================================================
-// UTILIDADES
-// ======================================================
-
-function $(id) {
-    return document.getElementById(id);
-}
-
-function initLucideIcons() {
-    if (window.lucide && typeof window.lucide.createIcons === "function") {
-        window.lucide.createIcons();
-    }
-}
-
-function showElement(element) {
-    if (!element) return;
-    element.classList.remove("hidden");
-}
-
-function hideElement(element) {
-    if (!element) return;
-    element.classList.add("hidden");
-}
-
-function updateStatus(type, text) {
-    const statusBadge = $("statusBadge");
-    const statusText = $("statusText");
-
-    if (statusText) {
-        statusText.textContent = text;
-    }
-
-    if (statusBadge) {
-        statusBadge.className = "status-badge";
-        statusBadge.classList.add(type);
-    }
-}
-
-function showConnectionView() {
-    showElement($("connectionView"));
-    hideElement($("chatView"));
-}
-
-function showChatView() {
-    hideElement($("connectionView"));
-    showElement($("chatView"));
-}
-
-function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// ======================================================
-// INICIO
-// ======================================================
-
-document.addEventListener("DOMContentLoaded", () => {
-    initLucideIcons();
+// Inicialización
+document.addEventListener('DOMContentLoaded', () => {
+    initPeer();
     setupEventListeners();
-
-    // Arranca SIEMPRE en modo lectura
-    setChatReadOnly(true);
-
-    renderRecentChats();
-
-    // Dejamos que la interfaz pinte primero
-    setTimeout(() => {
-        initPeer();
-    }, 100);
+    renderRecentChatsList();
 });
 
-// ======================================================
-// PEERJS
-// ======================================================
+// Sistema de Modales Custom
+function showCustomModal({ title = 'Aviso', message = '', icon = 'ℹ️', isConfirm = false }) {
+    return new Promise((resolve) => {
+        elements.modalTitle.textContent = title;
+        elements.modalMessage.textContent = message;
+        elements.modalIcon.textContent = icon;
 
-function loadPeerJS() {
-    return new Promise((resolve, reject) => {
-        if (window.Peer) {
-            resolve();
-            return;
+        if (isConfirm) {
+            elements.modalCancelBtn.classList.remove('hidden');
+        } else {
+            elements.modalCancelBtn.classList.add('hidden');
         }
 
-        const existing = document.querySelector(
-            'script[data-peertalkr-peerjs="true"]'
-        );
+        elements.modalOverlay.classList.remove('hidden');
 
-        if (existing) {
-            existing.addEventListener("load", resolve, { once: true });
-            existing.addEventListener("error", reject, { once: true });
-            return;
-        }
-
-        const script = document.createElement("script");
-
-        script.src =
-            "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
-
-        script.async = true;
-        script.dataset.peertalkrPeerjs = "true";
-
-        script.onload = () => {
-            if (window.Peer) {
-                resolve();
-            } else {
-                reject(new Error("PeerJS no está disponible."));
-            }
+        const onConfirm = () => {
+            cleanup();
+            resolve(true);
         };
 
-        script.onerror = () => {
-            reject(new Error("No se pudo cargar PeerJS."));
+        const onCancel = () => {
+            cleanup();
+            resolve(false);
         };
 
-        document.head.appendChild(script);
+        const cleanup = () => {
+            elements.modalOverlay.classList.add('hidden');
+            elements.modalConfirmBtn.removeEventListener('click', onConfirm);
+            elements.modalCancelBtn.removeEventListener('click', onCancel);
+        };
+
+        elements.modalConfirmBtn.addEventListener('click', onConfirm);
+        elements.modalCancelBtn.addEventListener('click', onCancel);
     });
 }
 
-async function initPeer() {
-    if (peerInitializing) {
-        return;
-    }
+// Inicializar PeerJS
+function initPeer() {
+    updateStatus('connecting', 'Conectando...');
+    
+    const customId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    peer = new Peer(customId, { debug: 1 });
 
-    peerInitializing = true;
-
-    clearTimeout(peerTimeoutTimer);
-
-    updateStatus("loading", "Inicializando...");
-
-    const myIdElement = $("myPeerId");
-
-    if (myIdElement) {
-        myIdElement.textContent = "Generando ID...";
-    }
-
-    try {
-        await loadPeerJS();
-
-        destroyPeer();
-
-        const shortId = generatePeerId();
-
-        peer = new Peer(shortId, {
-            host: "0.peerjs.com",
-            port: 443,
-            path: "/",
-            secure: true,
-
-            config: {
-                iceServers: [
-                    {
-                        urls: "stun:stun.l.google.com:19302"
-                    }
-                ]
-            }
-        });
-
-        attachPeerEvents();
-
-        peerTimeoutTimer = setTimeout(() => {
-            if (
-                peer &&
-                !peer.open &&
-                peerInitializing
-            ) {
-                peerInitializing = false;
-
-                updateStatus(
-                    "error",
-                    "El servidor tardó demasiado"
-                );
-
-                schedulePeerRetry(3000);
-            }
-        }, 15000);
-
-    } catch (error) {
-        console.error("Error iniciando PeerJS:", error);
-
-        peerInitializing = false;
-
-        updateStatus(
-            "error",
-            "No se pudo inicializar"
-        );
-
-        schedulePeerRetry(3000);
-    }
-}
-
-function attachPeerEvents() {
-    if (!peer) return;
-
-    peer.on("open", (id) => {
-        clearTimeout(peerTimeoutTimer);
-
-        peerInitializing = false;
+    peer.on('open', (id) => {
         myPeerId = id;
-
-        const myIdElement = $("myPeerId");
-
-        if (myIdElement) {
-            myIdElement.textContent = id;
-        }
-
-        updateStatus("online", "Listo para conectar");
-
-        const copyButton = $("copyIdBtn");
-
-        if (copyButton) {
-            copyButton.disabled = false;
-        }
-
-        const connectButton = $("connectBtn");
-
-        if (connectButton) {
-            connectButton.disabled = false;
-        }
+        elements.myIdInput.value = id;
+        updateStatus('ready', 'Listo');
     });
 
-    peer.on("connection", (incomingConnection) => {
-        setupConnectionHandlers(incomingConnection);
+    peer.on('connection', (conn) => {
+        setupIncomingConnection(conn);
     });
 
-    peer.on("disconnected", () => {
-        updateStatus(
-            "warning",
-            "Desconectado del servidor"
-        );
+    peer.on('error', (err) => {
+        console.error('PeerJS error:', err);
+        updateStatus('error', 'Error');
+        addSystemMessage(`Error: ${err.type}`);
     });
 
-    peer.on("close", () => {
-        updateStatus(
-            "error",
-            "Conexión cerrada"
-        );
-
-        setChatReadOnly(true);
-    });
-
-    peer.on("error", (error) => {
-        console.error("PeerJS error:", error);
-
-        peerInitializing = false;
-
-        let message = "Error de conexión";
-
-        if (error && error.type === "peer-unavailable") {
-            message = "El peer no está disponible";
-        }
-
-        if (error && error.type === "network") {
-            message = "Error de red";
-        }
-
-        updateStatus("error", message);
-
-        setChatReadOnly(true);
+    peer.on('disconnected', () => {
+        updateStatus('error', 'Desconectado');
     });
 }
 
-function generatePeerId() {
-    return Math.random()
-        .toString(36)
-        .substring(2, 10)
-        .toUpperCase();
+// Controladores de eventos
+function setupEventListeners() {
+    elements.copyIdBtn.addEventListener('click', () => {
+        if (!myPeerId) return;
+        navigator.clipboard.writeText(myPeerId).then(() => {
+            const originalText = elements.copyIdBtn.textContent;
+            elements.copyIdBtn.textContent = '¡Copiado!';
+            setTimeout(() => elements.copyIdBtn.textContent = originalText, 2000);
+        });
+    });
+
+    elements.connectForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const targetId = elements.remoteIdInput.value.trim().toUpperCase();
+        if (targetId) {
+            connectToPeer(targetId);
+        }
+    });
+
+    elements.disconnectBtn.addEventListener('click', () => {
+        if (activeConn) {
+            activeConn.close();
+        }
+        closeActiveChat();
+    });
+
+    elements.backToConnectBtn.addEventListener('click', () => {
+        switchView('connection');
+    });
+
+    elements.reconnectBtn.addEventListener('click', () => {
+        if (currentTargetId) {
+            connectToPeer(currentTargetId);
+        }
+    });
+
+    elements.chatForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        handleSendMessage();
+    });
+
+    elements.attachBtn.addEventListener('click', () => elements.fileInput.click());
+    elements.fileInput.addEventListener('change', handleFileSelect);
+    elements.removeFileBtn.addEventListener('click', clearSelectedFile);
+
+    elements.openSidebarBtn.addEventListener('click', toggleSidebar);
+    elements.closeSidebarBtn.addEventListener('click', toggleSidebar);
+    elements.sidebarOverlay.addEventListener('click', toggleSidebar);
+    elements.clearHistoryBtn.addEventListener('click', clearAllHistory);
 }
 
-function schedulePeerRetry(delay = 3000) {
-    clearTimeout(peerRetryTimer);
-
-    peerRetryTimer = setTimeout(() => {
-        initPeer();
-    }, delay);
-}
-
-function destroyPeer() {
-    if (!peer) return;
-
-    try {
-        peer.removeAllListeners();
-        peer.destroy();
-    } catch (error) {
-        console.warn("Error destruyendo peer:", error);
-    }
-
-    peer = null;
-}
-
-// ======================================================
-// CONEXIONES
-// ======================================================
-
-function connectToPeer(remotePeerId) {
-    if (!peer) {
-        updateStatus(
-            "error",
-            "PeerJS todavía no está listo"
-        );
+// Conexión Peer
+async function connectToPeer(targetId) {
+    if (targetId === myPeerId) {
+        await showCustomModal({
+            title: 'Conexión no válida',
+            message: 'No puedes conectarte a tu propio ID.',
+            icon: '⚠️'
+        });
         return;
     }
 
-    remotePeerId = String(remotePeerId || "")
-        .trim()
-        .toUpperCase();
-
-    if (!remotePeerId) {
-        updateStatus(
-            "error",
-            "Introduce un ID"
-        );
-        return;
-    }
-
-    if (remotePeerId === myPeerId) {
-        updateStatus(
-            "error",
-            "No puedes conectarte contigo mismo"
-        );
-        return;
-    }
-
-    if (conn) {
-        try {
-            conn.close();
-        } catch (_) {}
-
-        conn = null;
-    }
-
-    currentChatPeerId = remotePeerId;
-
-    setChatReadOnly(true);
-
-    updateStatus(
-        "loading",
-        "Conectando..."
-    );
-
-    const chatPeerId = $("chatPeerId");
-
-    if (chatPeerId) {
-        chatPeerId.textContent = remotePeerId;
-    }
-
-    showChatView();
-
-    clearMessages();
-
-    conn = peer.connect(
-        remotePeerId,
-        {
-            reliable: true
-        }
-    );
-
-    setupConnectionHandlers(conn);
+    updateStatus('connecting', 'Conectando...');
+    
+    const conn = peer.connect(targetId, { reliable: true });
+    setupConnectionEvents(conn);
 }
 
-function setupConnectionHandlers(connection) {
-    if (!connection) return;
+function setupIncomingConnection(conn) {
+    if (activeConn) {
+        conn.on('open', () => {
+            conn.send({ type: 'system', text: 'El usuario se encuentra ocupado.' });
+            setTimeout(() => conn.close(), 500);
+        });
+        return;
+    }
+    setupConnectionEvents(conn);
+}
 
-    conn = connection;
-    currentChatPeerId = connection.peer;
+function setupConnectionEvents(conn) {
+    conn.on('open', () => {
+        activeConn = conn;
+        currentTargetId = conn.peer;
 
-    connection.on("open", () => {
-        console.log(
-            "Conectado con:",
-            connection.peer
-        );
+        saveRecentPeer(currentTargetId);
+        renderRecentChatsList();
 
-        currentChatPeerId = connection.peer;
+        updateStatus('connected', 'Conectado');
+        setChatHeaderState('online', 'En línea');
 
-        const chatPeerId = $("chatPeerId");
-
-        if (chatPeerId) {
-            chatPeerId.textContent =
-                currentChatPeerId;
-        }
-
-        updateStatus(
-            "online",
-            "Conectado"
-        );
-
-        // ================================
-        // AQUÍ SE HABILITA LA ESCRITURA
-        // ================================
-
-        setChatReadOnly(false);
-
-        hideElement($("offlineBanner"));
-
-        loadChatHistory(currentChatPeerId);
+        elements.remoteIdInput.value = '';
+        switchView('chat');
+        loadChatHistory(currentTargetId);
+        
+        addSystemMessage(`Sesión iniciada con ${currentTargetId}`);
     });
 
-    connection.on("data", (data) => {
+    conn.on('data', (data) => {
         handleIncomingData(data);
     });
 
-    connection.on("close", () => {
-        console.log("Conexión cerrada");
-
-        setChatReadOnly(true);
-
-        showElement($("offlineBanner"));
-
-        updateStatus(
-            "warning",
-            "Chat desconectado"
-        );
+    conn.on('close', async () => {
+        await showCustomModal({
+            title: 'Sesión Finalizada',
+            message: 'El usuario remoto ha cerrado la sesión.',
+            icon: '🔌'
+        });
+        closeActiveChat();
     });
 
-    connection.on("error", (error) => {
-        console.error(
-            "Error en conexión:",
-            error
-        );
-
-        setChatReadOnly(true);
-
-        updateStatus(
-            "error",
-            "Error en la conexión"
-        );
+    conn.on('error', (err) => {
+        console.error('Error de canal:', err);
+        addSystemMessage('Error de datos.');
     });
 }
 
-function disconnectFromPeer() {
-    if (conn) {
-        try {
-            conn.close();
-        } catch (_) {}
+// Enviar y Recibir
+async function handleSendMessage() {
+    const text = elements.messageInput.value.trim();
+    if (!text && !selectedFile) return;
+
+    if (!activeConn || !activeConn.open) {
+        await showCustomModal({
+            title: 'Sin Conexión',
+            message: 'No hay una sesión activa para enviar este mensaje.',
+            icon: '⚠️'
+        });
+        return;
     }
 
-    conn = null;
-    currentChatPeerId = null;
+    const timestamp = new Date().toISOString();
 
-    // ================================
-    // AL DESCONECTAR = SOLO LECTURA
-    // ================================
+    if (selectedFile) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const fileData = {
+                type: 'file',
+                file: e.target.result,
+                fileName: selectedFile.name,
+                fileType: selectedFile.type,
+                fileSize: selectedFile.size,
+                text: text,
+                time: timestamp
+            };
 
-    setChatReadOnly(true);
+            activeConn.send(fileData);
+            appendMessage({ ...fileData, isLocal: true }, true);
+            saveMessageToStorage(currentTargetId, { ...fileData, isLocal: true });
 
-    showConnectionView();
-
-    updateStatus(
-        "online",
-        peer && peer.open
-            ? "Listo para conectar"
-            : "Desconectado"
-    );
-}
-
-// ======================================================
-// ENVÍO DE MENSAJES
-// ======================================================
-
-function sendMessage() {
-
-    // ==========================================
-    // PROTECCIÓN ABSOLUTA DEL MODO LECTURA
-    // ==========================================
-
-    if (readOnlyMode) {
-        console.warn(
-            "Intento de enviar mensaje en modo lectura."
-        );
-        return false;
-    }
-
-    if (!conn || !conn.open) {
-        console.warn(
-            "No existe una conexión activa."
-        );
-
-        setChatReadOnly(true);
-
-        return false;
-    }
-
-    const input = $("messageInput");
-
-    if (!input) {
-        return false;
-    }
-
-    const content = input.value.trim();
-
-    if (!content) {
-        return false;
-    }
-
-    const message = {
-        type: "text",
-        content: content,
-        timestamp: Date.now()
-    };
-
-    try {
-        conn.send(message);
-    } catch (error) {
-        console.error(
-            "No se pudo enviar el mensaje:",
-            error
-        );
-
-        setChatReadOnly(true);
-
-        return false;
-    }
-
-    renderMessage(
-        message,
-        "outgoing"
-    );
-
-    saveMessage(
-        currentChatPeerId,
-        message,
-        "outgoing"
-    );
-
-    input.value = "";
-
-    return true;
-}
-
-// ======================================================
-// ARCHIVOS
-// ======================================================
-
-function sendFile(file) {
-
-    // ==========================================
-    // PROTECCIÓN ABSOLUTA DEL MODO LECTURA
-    // ==========================================
-
-    if (readOnlyMode) {
-        console.warn(
-            "Intento de enviar archivo en modo lectura."
-        );
-        return false;
-    }
-
-    if (!conn || !conn.open) {
-        setChatReadOnly(true);
-        return false;
-    }
-
-    if (!file) {
-        return false;
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-        alert(
-            "El archivo es demasiado grande. Máximo: 10 MB."
-        );
-        return false;
-    }
-
-    const reader = new FileReader();
-
-    reader.onload = () => {
-
-        // ==========================================
-        // VOLVEMOS A COMPROBAR EL MODO LECTURA
-        // ==========================================
-
-        if (readOnlyMode) {
-            console.warn(
-                "El modo lectura se activó mientras se leía el archivo."
-            );
-            return;
-        }
-
-        if (!conn || !conn.open) {
-            setChatReadOnly(true);
-            return;
-        }
-
-        const fileMessage = {
-            type: file.type.startsWith("image/")
-                ? "image"
-                : "file",
-
-            name: file.name,
-            size: file.size,
-            mimeType: file.type,
-            content: reader.result,
-            timestamp: Date.now()
+            clearSelectedFile();
+            elements.messageInput.value = '';
+        };
+        reader.readAsDataURL(selectedFile);
+    } else {
+        const msgData = {
+            type: 'text',
+            text: text,
+            time: timestamp
         };
 
-        try {
-            conn.send(fileMessage);
-        } catch (error) {
-            console.error(
-                "No se pudo enviar el archivo:",
-                error
-            );
+        activeConn.send(msgData);
+        appendMessage({ ...msgData, isLocal: true }, true);
+        saveMessageToStorage(currentTargetId, { ...msgData, isLocal: true });
 
-            setChatReadOnly(true);
-            return;
-        }
-
-        renderMessage(
-            fileMessage,
-            "outgoing"
-        );
-
-        saveMessage(
-            currentChatPeerId,
-            fileMessage,
-            "outgoing"
-        );
-    };
-
-    reader.onerror = () => {
-        alert(
-            "No se pudo leer el archivo."
-        );
-    };
-
-    reader.readAsDataURL(file);
-
-    return true;
+        elements.messageInput.value = '';
+    }
 }
-
-// ======================================================
-// MENSAJES RECIBIDOS
-// ======================================================
 
 function handleIncomingData(data) {
-    if (!data || typeof data !== "object") {
+    if (data.type === 'system') {
+        addSystemMessage(data.text);
         return;
     }
 
-    if (
-        data.type !== "text" &&
-        data.type !== "image" &&
-        data.type !== "file"
-    ) {
-        return;
-    }
-
-    // RECIBIR SÍ está permitido en modo lectura
-    renderMessage(
-        data,
-        "incoming"
-    );
-
-    saveMessage(
-        currentChatPeerId,
-        data,
-        "incoming"
-    );
+    const msgObj = { ...data, isLocal: false };
+    appendMessage(msgObj, true);
+    saveMessageToStorage(currentTargetId, msgObj);
 }
 
-// ======================================================
-// RENDER DE MENSAJES
-// ======================================================
+// Renderizado de Mensajes
+function appendMessage(msg, animate = false) {
+    const bubble = document.createElement('div');
+    bubble.classList.add('message-bubble', msg.isLocal ? 'local' : 'remote');
 
-function renderMessage(
-    message,
-    direction = "incoming",
-    options = {}
-) {
-    const container =
-        options.container ||
-        $("messagesContainer");
-
-    if (!container) {
-        return;
+    if (animate) {
+        bubble.classList.add('message-send-anim');
     }
 
-    const wrapper =
-        document.createElement("div");
+    const formattedTime = msg.time 
+        ? new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+        : '';
 
-    wrapper.className =
-        `message-wrapper ${direction}`;
-
-    const bubble =
-        document.createElement("div");
-
-    bubble.className =
-        "message-bubble";
-
-    if (message.type === "text") {
-
-        const text =
-            document.createElement("div");
-
-        text.className =
-            "message-text";
-
-        text.textContent =
-            message.content || "";
-
-        bubble.appendChild(text);
-
-    } else if (
-        message.type === "image"
-    ) {
-
-        const image =
-            document.createElement("img");
-
-        image.className =
-            "message-image";
-
-        image.src =
-            message.content;
-
-        image.alt =
-            message.name || "Imagen";
-
-        image.loading = "lazy";
-
-        image.addEventListener(
-            "click",
-            () => {
-                window.open(
-                    message.content,
-                    "_blank",
-                    "noopener,noreferrer"
-                );
+    if (msg.type === 'file') {
+        let fileContentHtml = '';
+        
+        if (!msg.file) {
+            fileContentHtml = `
+                <div class="file-download-box">
+                    <div class="file-info-row">
+                        <span class="file-icon">⚠️</span>
+                        <span class="file-download-name">${escapeHtml(msg.fileName)}</span>
+                    </div>
+                    <span style="font-size:0.7rem; color: var(--text-muted);">Archivo excluido por tamaño.</span>
+                </div>
+            `;
+        } else {
+            if (msg.fileType && msg.fileType.startsWith('image/')) {
+                fileContentHtml = `<img src="${msg.file}" class="image-preview" alt="Imagen">`;
             }
-        );
 
-        bubble.appendChild(image);
-
-        if (message.name) {
-            const name =
-                document.createElement("div");
-
-            name.className =
-                "file-name";
-
-            name.textContent =
-                message.name;
-
-            bubble.appendChild(name);
+            fileContentHtml += `
+                <div class="file-download-box">
+                    <div class="file-info-row">
+                        <span class="file-icon">📁</span>
+                        <span class="file-download-name" title="${escapeHtml(msg.fileName)}">${escapeHtml(msg.fileName)}</span>
+                    </div>
+                    <a href="${msg.file}" download="${escapeHtml(msg.fileName)}" class="download-link-btn">Descargar (${formatBytes(msg.fileSize)})</a>
+                </div>
+            `;
         }
 
-    } else if (
-        message.type === "file"
-    ) {
+        if (msg.text) {
+            fileContentHtml += `<div class="message-text" style="margin-top:0.4rem;">${escapeHtml(msg.text)}</div>`;
+        }
 
-        const fileBox =
-            document.createElement("div");
-
-        fileBox.className =
-            "file-message";
-
-        const fileName =
-            document.createElement("div");
-
-        fileName.className =
-            "file-name";
-
-        fileName.textContent =
-            message.name || "Archivo";
-
-        const download =
-            document.createElement("a");
-
-        download.className =
-            "file-download";
-
-        download.href =
-            message.content;
-
-        download.download =
-            message.name || "archivo";
-
-        download.textContent =
-            "Abrir / descargar";
-
-        download.target = "_blank";
-        download.rel =
-            "noopener noreferrer";
-
-        fileBox.appendChild(fileName);
-        fileBox.appendChild(download);
-
-        bubble.appendChild(fileBox);
+        bubble.innerHTML = `
+            ${fileContentHtml}
+            <span class="message-time">${formattedTime}</span>
+        `;
+    } else {
+        bubble.innerHTML = `
+            <div class="message-text">${escapeHtml(msg.text)}</div>
+            <span class="message-time">${formattedTime}</span>
+        `;
     }
 
-    const time =
-        document.createElement("div");
-
-    time.className =
-        "message-time";
-
-    time.textContent =
-        formatTime(message.timestamp);
-
-    bubble.appendChild(time);
-
-    wrapper.appendChild(bubble);
-
-    container.appendChild(wrapper);
-
-    if (!options.skipScroll) {
-        container.scrollTop =
-            container.scrollHeight;
-    }
-
-    if (!options.skipIcons) {
-        initLucideIcons();
-    }
+    elements.messageList.appendChild(bubble);
+    scrollToBottom();
 }
 
-function formatTime(timestamp) {
-    if (!timestamp) {
-        return "";
-    }
-
-    return new Date(timestamp)
-        .toLocaleTimeString(
-            [],
-            {
-                hour: "2-digit",
-                minute: "2-digit"
-            }
-        );
+function addSystemMessage(text) {
+    const sysMsg = document.createElement('div');
+    sysMsg.classList.add('system-message', 'message-send-anim');
+    sysMsg.textContent = text;
+    elements.messageList.appendChild(sysMsg);
+    scrollToBottom();
 }
 
-function clearMessages() {
-    const container =
-        $("messagesContainer");
+// Adjuntos
+async function handleFileSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    if (!container) {
+    if (file.size > 15 * 1024 * 1024) {
+        await showCustomModal({
+            title: 'Archivo pesado',
+            message: 'El archivo supera el límite permitido de 15MB.',
+            icon: '📁'
+        });
+        elements.fileInput.value = '';
         return;
     }
 
-    container.innerHTML = "";
+    selectedFile = file;
+    elements.fileNameDisplay.textContent = file.name;
+    elements.fileSizeDisplay.textContent = formatBytes(file.size);
+    elements.filePreviewContainer.classList.remove('hidden');
 }
 
-// ======================================================
-// HISTORIAL
-// ======================================================
+function clearSelectedFile() {
+    selectedFile = null;
+    elements.fileInput.value = '';
+    elements.filePreviewContainer.classList.add('hidden');
+}
 
-function getHistory() {
-    if (historyCache !== null) {
-        return historyCache;
+// Almacenamiento
+function saveMessageToStorage(peerId, msgObj) {
+    const history = getStoredChatHistory(peerId);
+    let messageToSave = { ...msgObj };
+
+    if (messageToSave.type === 'file' && messageToSave.fileSize > 1.5 * 1024 * 1024) {
+        messageToSave.file = null;
     }
+
+    history.push(messageToSave);
 
     try {
-        historyCache =
-            JSON.parse(
-                localStorage.getItem(
-                    "peertalkr_history"
-                ) || "{}"
-            );
-    } catch (error) {
-        console.error(
-            "Error leyendo historial:",
-            error
-        );
-
-        historyCache = {};
+        localStorage.setItem(STORAGE_CHAT_KEY_PREFIX + peerId, JSON.stringify(history));
+    } catch (e) {
+        console.warn('Almacenamiento lleno. Limpiando...', e);
+        const cleanedHistory = history.map(item => {
+            if (item.type === 'file') return { ...item, file: null };
+            return item;
+        });
+        try {
+            localStorage.setItem(STORAGE_CHAT_KEY_PREFIX + peerId, JSON.stringify(cleanedHistory));
+        } catch (err) {
+            console.error('Error al guardar datos:', err);
+        }
     }
-
-    return historyCache;
 }
 
-function persistHistory() {
-    clearTimeout(historySaveTimer);
-
-    historySaveTimer =
-        setTimeout(() => {
-            try {
-                localStorage.setItem(
-                    "peertalkr_history",
-                    JSON.stringify(
-                        getHistory()
-                    )
-                );
-            } catch (error) {
-                console.error(
-                    "No se pudo guardar el historial:",
-                    error
-                );
-            }
-        }, 300);
-}
-
-function saveMessage(
-    peerId,
-    message,
-    direction
-) {
-    if (!peerId) {
-        return;
-    }
-
-    const history = getHistory();
-
-    if (!history[peerId]) {
-        history[peerId] = [];
-    }
-
-    history[peerId].push({
-        ...message,
-        direction
-    });
-
-    // Evitamos historiales gigantes
-    if (history[peerId].length > 500) {
-        history[peerId] =
-            history[peerId].slice(-500);
-    }
-
-    persistHistory();
-
-    renderRecentChats();
+function getStoredChatHistory(peerId) {
+    const data = localStorage.getItem(STORAGE_CHAT_KEY_PREFIX + peerId);
+    return data ? JSON.parse(data) : [];
 }
 
 function loadChatHistory(peerId) {
-    const history =
-        getHistory();
+    elements.messageList.innerHTML = '';
+    const history = getStoredChatHistory(peerId);
+    history.forEach(msg => appendMessage(msg, false));
+}
 
-    const messages =
-        history[peerId] || [];
+function saveRecentPeer(peerId) {
+    let recent = getRecentPeers();
+    if (!recent.includes(peerId)) {
+        recent.unshift(peerId);
+        localStorage.setItem(STORAGE_RECENT_KEY, JSON.stringify(recent));
+    }
+}
 
-    clearMessages();
+function getRecentPeers() {
+    const data = localStorage.getItem(STORAGE_RECENT_KEY);
+    return data ? JSON.parse(data) : [];
+}
 
-    if (!messages.length) {
-        showWelcomeMessage();
+function renderRecentChatsList() {
+    const peers = getRecentPeers();
+    elements.recentChatsList.innerHTML = '';
+
+    if (peers.length === 0) {
+        elements.recentChatsList.innerHTML = '<div class="empty-history">Sin chats guardados.</div>';
         return;
     }
 
-    const fragment =
-        document.createDocumentFragment();
+    peers.forEach(peerId => {
+        const item = document.createElement('div');
+        item.classList.add('recent-chat-item');
+        item.innerHTML = `
+            <div>
+                <div class="recent-chat-id">${peerId}</div>
+                <div class="recent-chat-meta">PeerTalkr Chat</div>
+            </div>
+            <button class="icon-button small delete-chat-btn" title="Borrar">✕</button>
+        `;
 
-    const temporaryContainer =
-        document.createElement("div");
+        item.addEventListener('click', (e) => {
+            if (e.target.classList.contains('delete-chat-btn')) return;
+            openSavedChat(peerId);
+        });
 
-    temporaryContainer.style.display =
-        "contents";
+        const deleteBtn = item.querySelector('.delete-chat-btn');
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeChatHistory(peerId);
+        });
 
-    fragment.appendChild(
-        temporaryContainer
-    );
-
-    for (const message of messages) {
-        renderMessage(
-            message,
-            message.direction || "incoming",
-            {
-                container:
-                    temporaryContainer,
-                skipScroll: true,
-                skipIcons: true
-            }
-        );
-    }
-
-    const container =
-        $("messagesContainer");
-
-    if (container) {
-        container.appendChild(fragment);
-        container.scrollTop =
-            container.scrollHeight;
-    }
-
-    initLucideIcons();
+        elements.recentChatsList.appendChild(item);
+    });
 }
 
-function showWelcomeMessage() {
-    const container =
-        $("messagesContainer");
-
-    if (!container) {
-        return;
-    }
-
-    const welcome =
-        document.createElement("div");
-
-    welcome.className =
-        "chat-welcome";
-
-    welcome.innerHTML = `
-        <div class="chat-welcome-icon">
-            <i data-lucide="message-circle"></i>
-        </div>
-        <h3>Sin mensajes todavía</h3>
-        <p>Los mensajes de esta conversación aparecerán aquí.</p>
-    `;
-
-    container.appendChild(welcome);
-
-    initLucideIcons();
-}
-
-// ======================================================
-// CHATS RECIENTES
-// ======================================================
-
-function renderRecentChats() {
-    clearTimeout(
-        recentChatsRenderTimer
-    );
-
-    recentChatsRenderTimer =
-        setTimeout(() => {
-
-            const container =
-                $("recentChats");
-
-            if (!container) {
-                return;
-            }
-
-            const history =
-                getHistory();
-
-            container.innerHTML = "";
-
-            const peerIds =
-                Object.keys(history);
-
-            if (!peerIds.length) {
-
-                const empty =
-                    document.createElement("div");
-
-                empty.className =
-                    "recent-empty";
-
-                empty.textContent =
-                    "No hay chats recientes.";
-
-                container.appendChild(empty);
-
-                return;
-            }
-
-            peerIds
-                .sort((a, b) => {
-                    const aMessages =
-                        history[a] || [];
-
-                    const bMessages =
-                        history[b] || [];
-
-                    const aLast =
-                        aMessages.length
-                            ? aMessages[
-                                aMessages.length - 1
-                            ].timestamp || 0
-                            : 0;
-
-                    const bLast =
-                        bMessages.length
-                            ? bMessages[
-                                bMessages.length - 1
-                            ].timestamp || 0
-                            : 0;
-
-                    return bLast - aLast;
-                })
-                .forEach((peerId) => {
-
-                    const messages =
-                        history[peerId] || [];
-
-                    const last =
-                        messages[
-                            messages.length - 1
-                        ];
-
-                    const item =
-                        document.createElement("button");
-
-                    item.type = "button";
-                    item.className =
-                        "recent-chat";
-
-                    item.dataset.peerId =
-                        peerId;
-
-                    const icon =
-                        document.createElement("div");
-
-                    icon.className =
-                        "recent-chat-icon";
-
-                    icon.innerHTML =
-                        '<i data-lucide="message-circle"></i>';
-
-                    const info =
-                        document.createElement("div");
-
-                    info.className =
-                        "recent-chat-info";
-
-                    const title =
-                        document.createElement("div");
-
-                    title.className =
-                        "recent-chat-title";
-
-                    title.textContent =
-                        peerId;
-
-                    const preview =
-                        document.createElement("div");
-
-                    preview.className =
-                        "recent-chat-preview";
-
-                    if (last) {
-                        if (last.type === "text") {
-                            preview.textContent =
-                                last.content;
-                        } else if (
-                            last.type === "image"
-                        ) {
-                            preview.textContent =
-                                "📷 Imagen";
-                        } else {
-                            preview.textContent =
-                                "📎 Archivo";
-                        }
-                    }
-
-                    info.appendChild(title);
-                    info.appendChild(preview);
-
-                    item.appendChild(icon);
-                    item.appendChild(info);
-
-                    item.addEventListener(
-                        "click",
-                        () => {
-                            openHistoryChat(
-                                peerId
-                            );
-                        }
-                    );
-
-                    container.appendChild(item);
-                });
-
-            initLucideIcons();
-
-        }, 100);
-}
-
-function openHistoryChat(peerId) {
-    currentChatPeerId = peerId;
-
-    const chatPeerId =
-        $("chatPeerId");
-
-    if (chatPeerId) {
-        chatPeerId.textContent =
-            peerId;
-    }
-
-    // ==========================================
-    // HISTORIAL = SIEMPRE SOLO LECTURA
-    // ==========================================
-
-    setChatReadOnly(true);
-
-    showElement(
-        $("offlineBanner")
-    );
-
-    updateStatus(
-        "warning",
-        "Modo lectura"
-    );
-
-    showChatView();
-
+function openSavedChat(peerId) {
+    currentTargetId = peerId;
+    switchView('chat');
     loadChatHistory(peerId);
+    
+    if (activeConn && activeConn.peer === peerId && activeConn.open) {
+        setChatHeaderState('online', 'En línea');
+    } else {
+        setChatHeaderState('saved', 'Historial Local');
+        addSystemMessage('Viendo historial.');
+    }
 
-    closeSidebar();
+    toggleSidebar();
 }
 
-// ======================================================
-// EVENTOS
-// ======================================================
-
-function setupEventListeners() {
-
-    // ------------------------------------------
-    // FORMULARIO DE MENSAJE
-    // ------------------------------------------
-
-    const messageForm =
-        $("messageForm");
-
-    if (messageForm) {
-
-        messageForm.addEventListener(
-            "submit",
-            (event) => {
-
-                event.preventDefault();
-
-                // SEGURIDAD EXTRA
-                if (readOnlyMode) {
-                    return;
-                }
-
-                sendMessage();
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // INPUT
-    // ------------------------------------------
-
-    const messageInput =
-        $("messageInput");
-
-    if (messageInput) {
-
-        messageInput.addEventListener(
-            "keydown",
-            (event) => {
-
-                if (readOnlyMode) {
-                    event.preventDefault();
-                    return;
-                }
-
-                if (
-                    event.key === "Enter" &&
-                    !event.shiftKey
-                ) {
-                    event.preventDefault();
-
-                    sendMessage();
-                }
-            }
-        );
-
-        messageInput.addEventListener(
-            "paste",
-            (event) => {
-
-                if (readOnlyMode) {
-                    event.preventDefault();
-                }
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // CONECTAR
-    // ------------------------------------------
-
-    const connectButton =
-        $("connectBtn");
-
-    if (connectButton) {
-
-        connectButton.addEventListener(
-            "click",
-            () => {
-
-                const input =
-                    $("remotePeerId");
-
-                if (!input) {
-                    return;
-                }
-
-                connectToPeer(
-                    input.value
-                );
-            }
-        );
-    }
-
-    const remoteInput =
-        $("remotePeerId");
-
-    if (remoteInput) {
-
-        remoteInput.addEventListener(
-            "keydown",
-            (event) => {
-
-                if (
-                    event.key === "Enter"
-                ) {
-                    event.preventDefault();
-
-                    connectToPeer(
-                        remoteInput.value
-                    );
-                }
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // COPIAR ID
-    // ------------------------------------------
-
-    const copyButton =
-        $("copyIdBtn");
-
-    if (copyButton) {
-
-        copyButton.addEventListener(
-            "click",
-            async () => {
-
-                if (!myPeerId) {
-                    return;
-                }
-
-                try {
-
-                    await navigator.clipboard.writeText(
-                        myPeerId
-                    );
-
-                    const oldText =
-                        copyButton.innerHTML;
-
-                    copyButton.innerHTML =
-                        '<i data-lucide="check"></i> Copiado';
-
-                    initLucideIcons();
-
-                    setTimeout(() => {
-                        copyButton.innerHTML =
-                            oldText;
-
-                        initLucideIcons();
-                    }, 1500);
-
-                } catch (error) {
-                    console.error(
-                        "No se pudo copiar:",
-                        error
-                    );
-                }
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // ARCHIVOS
-    // ------------------------------------------
-
-    const fileButton =
-        $("fileButton");
-
-    const fileInput =
-        $("fileInput");
-
-    if (fileButton && fileInput) {
-
-        fileButton.addEventListener(
-            "click",
-            (event) => {
-
-                if (readOnlyMode) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    return;
-                }
-
-                fileInput.click();
-            }
-        );
-
-        fileInput.addEventListener(
-            "change",
-            (event) => {
-
-                if (readOnlyMode) {
-                    event.target.value = "";
-                    return;
-                }
-
-                const file =
-                    event.target.files &&
-                    event.target.files[0];
-
-                if (file) {
-                    sendFile(file);
-                }
-
-                event.target.value = "";
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // SIDEBAR
-    // ------------------------------------------
-
-    const sidebarOpenButton =
-        $("sidebarOpenBtn");
-
-    const sidebarCloseButton =
-        $("sidebarCloseBtn");
-
-    if (sidebarOpenButton) {
-        sidebarOpenButton.addEventListener(
-            "click",
-            openSidebar
-        );
-    }
-
-    if (sidebarCloseButton) {
-        sidebarCloseButton.addEventListener(
-            "click",
-            closeSidebar
-        );
-    }
-
-    // ------------------------------------------
-    // VOLVER
-    // ------------------------------------------
-
-    const backButton =
-        $("backBtn");
-
-    if (backButton) {
-
-        backButton.addEventListener(
-            "click",
-            () => {
-
-                setChatReadOnly(true);
-
-                showConnectionView();
-
-                currentChatPeerId = null;
-
-                if (conn) {
-                    try {
-                        conn.close();
-                    } catch (_) {}
-                }
-
-                conn = null;
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // DESCONECTAR
-    // ------------------------------------------
-
-    const disconnectButton =
-        $("disconnectBtn");
-
-    if (disconnectButton) {
-
-        disconnectButton.addEventListener(
-            "click",
-            disconnectFromPeer
-        );
-    }
-
-    // ------------------------------------------
-    // LIMPIAR CHAT ACTUAL
-    // ------------------------------------------
-
-    const clearCurrentButton =
-        $("clearCurrentChatBtn");
-
-    if (clearCurrentButton) {
-
-        clearCurrentButton.addEventListener(
-            "click",
-            () => {
-
-                if (!currentChatPeerId) {
-                    return;
-                }
-
-                const confirmed =
-                    confirm(
-                        "¿Querés borrar este chat del historial?"
-                    );
-
-                if (!confirmed) {
-                    return;
-                }
-
-                const history =
-                    getHistory();
-
-                delete history[
-                    currentChatPeerId
-                ];
-
-                persistHistory();
-
-                clearMessages();
-
-                showWelcomeMessage();
-
-                renderRecentChats();
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // LIMPIAR TODO EL HISTORIAL
-    // ------------------------------------------
-
-    const clearHistoryButton =
-        $("clearHistoryBtn");
-
-    if (clearHistoryButton) {
-
-        clearHistoryButton.addEventListener(
-            "click",
-            () => {
-
-                const confirmed =
-                    confirm(
-                        "¿Querés borrar todo el historial?"
-                    );
-
-                if (!confirmed) {
-                    return;
-                }
-
-                historyCache = {};
-
-                localStorage.removeItem(
-                    "peertalkr_history"
-                );
-
-                renderRecentChats();
-
-                if (currentChatPeerId) {
-                    clearMessages();
-                    showWelcomeMessage();
-                }
-            }
-        );
-    }
-
-    // ------------------------------------------
-    // CERRAR SIDEBAR HACIENDO CLICK AFUERA
-    // ------------------------------------------
-
-    const sidebarOverlay =
-        $("sidebarOverlay");
-
-    if (sidebarOverlay) {
-
-        sidebarOverlay.addEventListener(
-            "click",
-            closeSidebar
-        );
-    }
-
-    // ------------------------------------------
-    // DRAG & DROP
-    // ------------------------------------------
-
-    const messageArea =
-        $("messagesContainer");
-
-    if (messageArea) {
-
-        messageArea.addEventListener(
-            "dragover",
-            (event) => {
-                event.preventDefault();
-            }
-        );
-
-        messageArea.addEventListener(
-            "drop",
-            (event) => {
-
-                event.preventDefault();
-
-                // =================================
-                // NUNCA aceptar archivos en lectura
-                // =================================
-
-                if (readOnlyMode) {
-                    return;
-                }
-
-                const files =
-                    event.dataTransfer.files;
-
-                if (
-                    files &&
-                    files.length > 0
-                ) {
-                    sendFile(files[0]);
-                }
-            }
-        );
+function removeChatHistory(peerId) {
+    localStorage.removeItem(STORAGE_CHAT_KEY_PREFIX + peerId);
+    let recent = getRecentPeers().filter(id => id !== peerId);
+    localStorage.setItem(STORAGE_RECENT_KEY, JSON.stringify(recent));
+    renderRecentChatsList();
+
+    if (currentTargetId === peerId) {
+        closeActiveChat();
     }
 }
 
-// ======================================================
-// SIDEBAR
-// ======================================================
+async function clearAllHistory() {
+    const confirmed = await showCustomModal({
+        title: 'Borrar historial',
+        message: '¿Estás seguro de que deseas eliminar todo el historial de conversaciones guardado localmente?',
+        icon: '🗑️',
+        isConfirm: true
+    });
 
-function openSidebar() {
-    const sidebar =
-        $("sidebar");
+    if (!confirmed) return;
+    
+    const peers = getRecentPeers();
+    peers.forEach(id => localStorage.removeItem(STORAGE_CHAT_KEY_PREFIX + id));
+    localStorage.removeItem(STORAGE_RECENT_KEY);
 
-    const overlay =
-        $("sidebarOverlay");
+    renderRecentChatsList();
+    closeActiveChat();
+}
 
-    if (sidebar) {
-        sidebar.classList.add("open");
-    }
-
-    if (overlay) {
-        overlay.classList.add("open");
+// Helpers
+function switchView(viewName) {
+    if (viewName === 'connection') {
+        elements.connectionSection.classList.remove('hidden');
+        elements.chatSection.classList.add('hidden');
+    } else if (viewName === 'chat') {
+        elements.chatTargetTitle.textContent = currentTargetId;
+        elements.connectionSection.classList.add('hidden');
+        elements.chatSection.classList.remove('hidden');
     }
 }
 
-function closeSidebar() {
-    const sidebar =
-        $("sidebar");
-
-    const overlay =
-        $("sidebarOverlay");
-
-    if (sidebar) {
-        sidebar.classList.remove("open");
+function closeActiveChat() {
+    if (activeConn) {
+        activeConn.close();
+        activeConn = null;
     }
+    currentTargetId = '';
+    elements.messageList.innerHTML = '';
+    switchView('connection');
+    updateStatus('ready', 'Listo');
+}
 
-    if (overlay) {
-        overlay.classList.remove("open");
+function updateStatus(state, text) {
+    elements.statusBadge.className = `status-badge ${state}`;
+    elements.statusText.textContent = text;
+}
+
+function setChatHeaderState(state, text) {
+    elements.chatConnectionState.textContent = text;
+    elements.chatConnectionState.className = `connection-state ${state}`;
+
+    if (state === 'saved' || state === 'disconnected') {
+        elements.reconnectBtn.classList.remove('hidden');
+    } else {
+        elements.reconnectBtn.classList.add('hidden');
     }
 }
 
-// ======================================================
-// PAGEHIDE
-// ======================================================
+function toggleSidebar() {
+    elements.sidebar.classList.toggle('hidden');
+    elements.sidebarOverlay.classList.toggle('hidden');
+}
 
-window.addEventListener(
-    "pagehide",
-    () => {
+function scrollToBottom() {
+    elements.messageList.scrollTop = elements.messageList.scrollHeight;
+}
 
-        clearTimeout(
-            historySaveTimer
-        );
+function formatBytes(bytes, decimals = 1) {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
 
-        try {
-            if (historyCache !== null) {
-                localStorage.setItem(
-                    "peertalkr_history",
-                    JSON.stringify(
-                        historyCache
-                    )
-                );
-            }
-        } catch (error) {
-            console.error(
-                "No se pudo guardar historial:",
-                error
-            );
-        }
-    }
-);
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#039;");
+}
