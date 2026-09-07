@@ -3,310 +3,122 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>PeerTalkr</title>
-    <meta name="description" content="Chat P2P privado mediante WebRTC">
-
-    <link rel="icon" href="favicon.png">
-
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js" defer></script>
-
     <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
-
 <body>
-
-    <div class="background-glow glow-one"></div>
-    <div class="background-glow glow-two"></div>
-
-    <!-- TOPBAR -->
-    <header class="topbar">
-        <div class="brand">
-            <div class="brand-icon">
-                <i data-lucide="message-circle"></i>
+    <div class="app-container fade-in">
+        <!-- Sidebar / Historial -->
+        <div id="sidebarOverlay" class="sidebar-overlay hidden"></div>
+        <aside id="sidebar" class="sidebar hidden">
+            <div class="sidebar-header">
+                <h2>Historial de Chats</h2>
+                <button id="closeSidebarBtn" class="icon-button">✕</button>
             </div>
-
-            <div>
-                <div class="brand-name">PeerTalkr</div>
-                <div class="brand-subtitle">P2P Chat</div>
+            <div id="recentChatsList" class="recent-chats-list"></div>
+            <div class="sidebar-footer">
+                <button id="clearHistoryBtn" class="danger-btn full-width">Borrar Historial</button>
             </div>
-        </div>
+        </aside>
 
-        <div class="topbar-actions">
-            <button id="openSidebarButton" class="icon-button" title="Chats recientes">
-                <i data-lucide="menu"></i>
-            </button>
-
-            <div id="connectionStatus" class="status-badge initializing">
+        <!-- Header Principal -->
+        <header class="main-header">
+            <button id="openSidebarBtn" class="icon-button" title="Historial">☰</button>
+            <div class="header-title">
+                <h1>PeerTalkr</h1>
+            </div>
+            <div id="statusBadge" class="status-badge connecting">
                 <span class="status-dot"></span>
-                <span id="statusText">Inicializando...</span>
+                <span id="statusText">Iniciando...</span>
             </div>
-        </div>
-    </header>
+        </header>
 
-
-    <!-- MAIN -->
-    <main class="main-container">
-
-        <!-- CONNECTION VIEW -->
-        <section id="connectionSection" class="connection-section">
-
-            <div class="hero">
-                <div class="hero-icon">
-                    <i data-lucide="radio"></i>
+        <!-- Pantalla de Conexión -->
+        <main id="connectionSection" class="view-section slide-up">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">🔑</span>
+                    <h2>Tu ID de Conexión</h2>
                 </div>
-
-                <h1>Chat privado.<br><span>Directo entre personas.</span></h1>
-
-                <p>
-                    Conectate directamente con otra persona usando WebRTC,
-                    sin necesidad de crear una cuenta.
-                </p>
+                <div class="input-group">
+                    <input type="text" id="myIdInput" readonly placeholder="Generando ID...">
+                    <button id="copyIdBtn" class="primary-btn">Copiar ID</button>
+                </div>
             </div>
 
-            <div class="connection-card">
-
-                <div class="card-title">
-                    <i data-lucide="link"></i>
-                    <span>Tu ID de conexión</span>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-icon">💬</span>
+                    <h2>Conectar a un Peer</h2>
                 </div>
-
-                <div class="my-id-box">
-                    <span id="myPeerId">Generando ID...</span>
-
-                    <button
-                        id="copyIdButton"
-                        class="copy-button"
-                        title="Copiar ID"
-                        disabled
-                    >
-                        <i data-lucide="copy"></i>
-                    </button>
-                </div>
-
-                <div class="divider">
-                    <span>o conectate a otra persona</span>
-                </div>
-
-                <form id="connectForm" class="connect-form">
-                    <div class="input-wrapper">
-                        <i data-lucide="hash"></i>
-
-                        <input
-                            id="peerIdInput"
-                            type="text"
-                            placeholder="ID del otro usuario"
-                            autocomplete="off"
-                            spellcheck="false"
-                        >
+                <form id="connectForm">
+                    <div class="input-group">
+                        <input type="text" id="remoteIdInput" placeholder="Ingresa el ID del par" required autocomplete="off">
+                        <button type="submit" class="primary-btn">Conectar</button>
                     </div>
-
-                    <button id="connectButton" type="submit" disabled>
-                        <i data-lucide="arrow-right"></i>
-                        Conectar
-                    </button>
                 </form>
+            </div>
+        </main>
 
-                <div id="connectionError" class="connection-error hidden"></div>
-
+        <!-- Pantalla de Chat -->
+        <main id="chatSection" class="view-section hidden slide-up">
+            <div class="chat-header">
+                <button id="backToConnectBtn" class="icon-button">←</button>
+                <div class="chat-title-group">
+                    <h2 id="chatTargetTitle">--</h2>
+                    <span id="chatConnectionState" class="connection-state">Sin conexión</span>
+                </div>
+                <div class="chat-actions">
+                    <button id="reconnectBtn" class="secondary-btn hidden">Reconectar</button>
+                    <button id="disconnectBtn" class="danger-btn">Desconectar</button>
+                </div>
             </div>
 
-            <div class="security-note">
-                <i data-lucide="shield-check"></i>
-                <span>Conexión cifrada mediante WebRTC P2P</span>
+            <div id="messageList" class="message-list"></div>
+
+            <!-- Vista previa de archivo adjunto -->
+            <div id="filePreviewContainer" class="file-preview-container hidden slide-up">
+                <div class="file-info">
+                    <span class="file-icon">📄</span>
+                    <div class="file-details">
+                        <span id="fileNameDisplay">archivo.pdf</span>
+                        <span id="fileSizeDisplay">(0 MB)</span>
+                    </div>
+                </div>
+                <button id="removeFileBtn" class="icon-button small">✕</button>
             </div>
 
-        </section>
+            <!-- Formulario de Envío -->
+            <form id="chatForm" class="chat-form">
+                <input type="file" id="fileInput" class="hidden">
+                <button type="button" id="attachBtn" class="icon-button" title="Adjuntar archivo">📎</button>
+                <input type="text" id="messageInput" placeholder="Escribe un mensaje en PeerTalkr..." autocomplete="off">
+                <button type="submit" class="primary-btn">Enviar</button>
+            </form>
+        </main>
 
-
-        <!-- CHAT VIEW -->
-        <section id="chatSection" class="chat-section hidden">
-
-            <div class="chat-card">
-
-                <!-- CHAT HEADER -->
-                <div class="chat-header">
-
-                    <div class="chat-user">
-
-                        <button id="backButton" class="icon-button mobile-back" title="Volver">
-                            <i data-lucide="arrow-left"></i>
-                        </button>
-
-                        <div class="user-avatar">
-                            <i data-lucide="user"></i>
-                        </div>
-
-                        <div class="user-info">
-                            <div class="user-name" id="chatPeerId">
-                                Usuario
-                            </div>
-
-                            <div class="user-status">
-                                <span class="online-dot"></span>
-                                <span id="chatStatus">Conectado</span>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <div class="chat-actions">
-
-                        <button
-                            id="readOnlyButton"
-                            class="icon-button"
-                            title="Modo lectura"
-                        >
-                            <i data-lucide="book-open"></i>
-                        </button>
-
-                        <button
-                            id="clearChatButton"
-                            class="icon-button"
-                            title="Limpiar chat"
-                        >
-                            <i data-lucide="trash-2"></i>
-                        </button>
-
-                        <button
-                            id="disconnectButton"
-                            class="icon-button danger"
-                            title="Desconectar"
-                        >
-                            <i data-lucide="log-out"></i>
-                        </button>
-
-                    </div>
-
+        <!-- Modal Custom (Reemplaza alert/confirm) -->
+        <div id="customModal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <span id="modalIcon" class="modal-icon">ℹ️</span>
+                    <h3 id="modalTitle">Aviso</h3>
                 </div>
-
-
-                <!-- READ ONLY NOTICE -->
-                <div id="readOnlyBanner" class="read-only-banner hidden">
-                    <i data-lucide="eye"></i>
-
-                    <div>
-                        <strong>Modo lectura</strong>
-                        <span>Podés leer el chat, pero no enviar mensajes ni archivos.</span>
-                    </div>
-
-                    <button id="disableReadOnlyButton">
-                        Salir
-                    </button>
+                <p id="modalMessage" class="modal-body">Mensaje del sistema</p>
+                <div class="modal-actions">
+                    <button id="modalCancelBtn" class="secondary-btn hidden">Cancelar</button>
+                    <button id="modalConfirmBtn" class="primary-btn">Aceptar</button>
                 </div>
-
-
-                <!-- OFFLINE NOTICE -->
-                <div id="offlineBanner" class="offline-banner hidden">
-                    <i data-lucide="wifi-off"></i>
-                    <span>La conexión se perdió.</span>
-                </div>
-
-
-                <!-- MESSAGES -->
-                <div id="messagesContainer" class="messages-container">
-
-                    <div id="welcomeMessage" class="welcome-message">
-                        <div class="welcome-icon">
-                            <i data-lucide="message-square"></i>
-                        </div>
-
-                        <h2>Chat conectado</h2>
-
-                        <p>
-                            Los mensajes enviados desde acá se transmiten
-                            directamente al otro usuario.
-                        </p>
-                    </div>
-
-                </div>
-
-
-                <!-- MESSAGE FORM -->
-                <form id="messageForm" class="message-form">
-
-                    <input
-                        id="fileInput"
-                        type="file"
-                        hidden
-                        accept="*/*"
-                    >
-
-                    <button
-                        id="attachButton"
-                        type="button"
-                        class="attach-button"
-                        title="Adjuntar archivo"
-                    >
-                        <i data-lucide="paperclip"></i>
-                    </button>
-
-                    <div class="message-input-wrapper">
-                        <textarea
-                            id="messageInput"
-                            rows="1"
-                            placeholder="Escribí un mensaje..."
-                            autocomplete="off"
-                            spellcheck="true"
-                        ></textarea>
-                    </div>
-
-                    <button
-                        id="sendButton"
-                        type="submit"
-                        class="send-button"
-                        title="Enviar"
-                    >
-                        <i data-lucide="send"></i>
-                    </button>
-
-                </form>
-
-                <div class="file-limit">
-                    Archivos de hasta 10 MB
-                </div>
-
             </div>
-
-        </section>
-
-    </main>
-
-
-    <!-- SIDEBAR -->
-    <aside id="sidebar" class="sidebar">
-
-        <div class="sidebar-header">
-            <div>
-                <div class="sidebar-title">Chats recientes</div>
-                <div class="sidebar-subtitle">Tus conversaciones</div>
-            </div>
-
-            <button id="closeSidebarButton" class="icon-button">
-                <i data-lucide="x"></i>
-            </button>
         </div>
 
-        <div id="recentChats" class="recent-chats"></div>
+        <!-- Pie de página -->
+        <footer class="app-footer">
+            <span>Fefin 2026 | peertalkr.v6.navy</span>
+        </footer>
+    </div>
 
-        <div class="sidebar-footer">
-            <button id="clearHistoryButton" class="clear-history-button">
-                <i data-lucide="trash-2"></i>
-                Borrar historial
-            </button>
-        </div>
-
-    </aside>
-
-    <div id="sidebarOverlay" class="sidebar-overlay"></div>
-
-
-    <!-- APP -->
     <script src="app.js"></script>
-
 </body>
 </html>
